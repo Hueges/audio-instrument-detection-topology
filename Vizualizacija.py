@@ -22,7 +22,7 @@ path2='muzika12'
 for filename in os.listdir(path2):
     if filename.split('.')[-1] == 'wav':
         print(filename)
-        sampling_rate2, audio_data2 = wav.read(path2 + '\\' + filename)
+        sampling_rate2, audio_data2 = wav.read(os.path.join(path2, filename))
 
         # Extract a single channel if stereo audio
         if audio_data2.ndim > 1:

@@ -1,118 +1,117 @@
 import numpy as np
-import scipy.io.wavfile as wav
-import matplotlib.pyplot as plt
+import librosa
 import os
-from gtda.plotting import plot_point_cloud
-from gtda.homology import VietorisRipsPersistence
-from ripser import ripser
-from persim import plot_diagrams
+import pandas as pd
+import random
 from gtda.time_series import SingleTakensEmbedding
-from gtda.plotting import plot_diagram
-from tqdm import tqdm
+from gtda.homology import VietorisRipsPersistence
 from gtda.diagrams import HeatKernel
+from tqdm import tqdm
+from joblib import Parallel, delayed
+
+# OpenMIC-2018: skinuti sa https://zenodo.org/record/1432913
+# Raspakirati u folder openmic-2018/ unutar projekta
+OPENMIC_DIR = 'openmic-2018'
+AUDIO_DIR = os.path.join(OPENMIC_DIR, 'audio')
+LABELS_CSV = os.path.join(OPENMIC_DIR, 'openmic-2018-aggregated-labels.csv')
+
+SAMPLES_PER_CLASS = 100
+RELEVANCE_THRESHOLD = 0.5
+SR_TARGET = 22050
+CLIP_SECONDS = 4  # koristimo prvih 4 sekunde svakog 10s klipa
+
+INSTRUMENTS = [
+    'accordion', 'banjo', 'bass', 'cello', 'clarinet', 'cymbals', 'drums',
+    'flute', 'guitar', 'mallet_percussion', 'mandolin', 'organ', 'piano',
+    'saxophone', 'synthesizer', 'trombone', 'trumpet', 'ukulele', 'violin', 'voice'
+]
 
 
-#A = []
-#path = 'muzika11'
-#window_length = 0.4  # 0.05 seconds
+def process_clip(sample_key, label_vec, audio_dir):
+    subdir = sample_key[:3]
+    filepath = os.path.join(audio_dir, subdir, f"{sample_key}.ogg")
+    if not os.path.exists(filepath):
+        return None
+    try:
+        audio, _ = librosa.load(filepath, sr=SR_TARGET, mono=True, duration=CLIP_SECONDS)
+        audio = audio.astype(np.float32)
+        if len(audio) < 2000:
+            return None
 
-A=[]
-path='muzika12'
-
-for filename in os.listdir(path):
-    if filename.split('.')[-1] == 'wav':
-        print(filename)
-        sampling_rate, audio_data = wav.read(path + '\\' + filename)
-
-        # Extract a single channel if stereo audio
-        if audio_data.ndim > 1:
-            audio_data = audio_data[:, 0]  # Extract the first channel
-
-        A.append(audio_data)
-
-
-# for i in A:
-#     plt.plot(i)
-#     plt.xlabel('Time')
-#     plt.ylabel('Amplitude')
-#     plt.title('Sound Wave of Middle C on Piano')
-#     plt.grid()
-#     plt.show(block=True)
-#     plt.close()
-
-
-
-max_embedding_dimension = 3
-max_time_delay = 8
-stride = 100
-
-embedder1 = SingleTakensEmbedding(
-    parameters_type="fixed",
-    time_delay=max_time_delay,
-    dimension=max_embedding_dimension,
-    stride=stride,
-)
-
-
-def fit_embedder(embedder: SingleTakensEmbedding, y: np.ndarray, verbose: bool = True) -> np.ndarray:
-    """Fits a Takens embedder and displays optimal search parameters."""
-    y_embedded = embedder.fit_transform(y)
-
-    if verbose:
-        print(f"Shape of embedded time series: {y_embedded.shape}")
-        print(
-            f"Dimenzija oblaka tacaka {embedder.dimension_} vremenska zadrska izmedju vrednosti pri pravljenju oblaka {embedder.time_delay_}"
+        embedder = SingleTakensEmbedding(
+            parameters_type="fixed", time_delay=8, dimension=3, stride=100
         )
+        vr = VietorisRipsPersistence(homology_dimensions=[0, 1, 2], max_edge_length=5)
+        kernel = HeatKernel()
 
-    return y_embedded
+        embedded = embedder.fit_transform(audio).reshape(1, -1, 3)
+        diagram = vr.fit_transform(embedded)
+        heat = kernel.fit_transform(diagram)[0]
 
-
-d = []
-b = []
-labels = []
-for i, audio_data in enumerate(A):
-    if i < 100:
-        label = 0
-    elif i > 99:
-        label = 1
-
-    labels.append(label)
-
-    result = fit_embedder(embedder1, audio_data)
-    d.append(result)
-    print("Velicina oblaka", result.size)
-
-labels_array = np.array(labels)
-
-b = d
-b_reshaped = []
-
-for i in b:
-    k = i.reshape(1, *i.shape)
-    # assert isinstance(k, object)
-    b_reshaped.append(k)
+        return heat, label_vec
+    except Exception:
+        return None
 
 
-# fig=plot_point_cloud(d[61])
-# fig.show()
+if __name__ == '__main__':
+    random.seed(42)
+    np.random.seed(42)
 
-diagrami = []
-VR = VietorisRipsPersistence(homology_dimensions=[0, 1, 2], max_edge_length=5)
-for i in tqdm(b_reshaped):
-    j = VR.fit_transform(i)
-   # l=scaler.fit_transform(j)
-    diagrami.append(j)
+    print("Ucitavam labele...")
+    df = pd.read_csv(LABELS_CSV)
 
+    print("Gradim multi-label matricu...")
+    df_pos = df[df['instrument'].isin(INSTRUMENTS)]
+    pivot = df_pos.pivot_table(
+        index='sample_key',
+        columns='instrument',
+        values='relevance',
+        aggfunc='max',
+        fill_value=0.0,
+    )
+    for inst in INSTRUMENTS:
+        if inst not in pivot.columns:
+            pivot[inst] = 0.0
+    pivot = pivot[INSTRUMENTS]
+    label_matrix = (pivot >= RELEVANCE_THRESHOLD).astype(np.float32)
 
+    # Za svaki instrument uzmemo do SAMPLES_PER_CLASS klipova
+    selected_keys = set()
+    for inst in INSTRUMENTS:
+        positive = label_matrix[label_matrix[inst] == 1.0].index.tolist()
+        random.shuffle(positive)
+        selected_keys.update(positive[:SAMPLES_PER_CLASS])
 
+    selected_keys = list(selected_keys)
+    print(f"Ukupno klipova za obradu: {len(selected_keys)}")
 
-# sigma=0.5,n_bins=60
-kernel = HeatKernel()
-Heat_diagrams = []
+    print("Ekstraktujem TDA feature-e (paralelno)...")
+    results = Parallel(n_jobs=-1, backend='loky', verbose=1)(
+        delayed(process_clip)(
+            key,
+            label_matrix.loc[key].values,
+            AUDIO_DIR,
+        )
+        for key in selected_keys
+    )
 
-for diagram in tqdm(diagrami):
-    heat_diagram = kernel.fit_transform(diagram)[0]
-    Heat_diagrams.append(heat_diagram)
+    features, labels = [], []
+    for r in results:
+        if r is not None:
+            feat, lbl = r
+            features.append(feat)
+            labels.append(lbl)
 
-np.save("Heat_diagrams2.npy", Heat_diagrams)
-np.save("Labele.npy2", labels_array)
+    features_arr = np.array(features)
+    labels_arr = np.array(labels)
+
+    np.save("Heat_diagrams.npy", features_arr)
+    np.save("Labele.npy", labels_arr)
+
+    print(f"\nSacuvano {len(features_arr)} uzoraka")
+    print(f"Features shape: {features_arr.shape}")
+    print(f"Labele shape:   {labels_arr.shape}")
+    print("\nDistribucija po klasama:")
+    for i, inst in enumerate(INSTRUMENTS):
+        count = int(labels_arr[:, i].sum())
+        print(f"  {inst:20s}: {count}")
