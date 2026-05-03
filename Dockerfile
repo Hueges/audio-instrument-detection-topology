@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements-docker.txt .
 RUN pip install --no-cache-dir -r requirements-docker.txt
 
-COPY api.py Klasifikuj.py model_vggish.pkl ./
+COPY api.py Klasifikuj.py ./
+RUN hf download hueges/musical-classifier model_vggish.pkl --local-dir .
 
 EXPOSE 8000
 
