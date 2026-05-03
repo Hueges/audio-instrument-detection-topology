@@ -1,4 +1,14 @@
-**# Classification of musical instrument based on topological properties** 
+---
+title: Musical Classifier
+emoji: 🏆
+colorFrom: gray
+colorTo: green
+sdk: docker
+pinned: false
+license: mit
+---
+
+# Classification of musical instrument based on topological properties
 
 **Short introduction**: 
 Our entry set is collection of tones played on different types of instruments, which we load as time series.
@@ -8,6 +18,3 @@ Visualization.py is just for detailed representation of topology of these tones.
 shape trumpet and piano take.  
 Podaci.py cleanses and prepares data.  
 Train.py splits data, and makes a model.
-
-**## To clone**
-git clone https://github.com/Hueges/Classification-of-musical-instruments-with-homology
