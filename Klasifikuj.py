@@ -27,7 +27,7 @@ INSTRUMENTS = [
 ]
 
 THRESHOLD = 0.35
-SR_VGGISH = 16000  # VGGish ocekuje 16kHz
+SR_VGGISH = 16000  
 
 _vggish_model = None
 
@@ -35,14 +35,22 @@ _vggish_model = None
 def get_vggish():
     global _vggish_model
     if _vggish_model is None:
-        print("  Ucitavam VGGish model...")
+        print("  Loading VGGish model...")
         _vggish_model = vggish()
         _vggish_model.eval()
     return _vggish_model
 
+def get_clf():
+    global _clf
+    if _clf is None:
+        print("  Loading classifier...")
+        with open("model_vggish.pkl", "rb") as f:
+            _clf = pickle.load(f)
+    return _clf
+
 
 def extract_features(filepath):
-    """Vraca (1, 128) VGGish embedding srednje vrednosti svih segmenata."""
+    """Return (1, 128) VGGish embedding as the mean of all segments."""
     audio, _ = librosa.load(filepath, sr=SR_VGGISH, mono=True)
     audio = audio.astype(np.float32)
 
@@ -59,22 +67,21 @@ def extract_features(filepath):
 
 def klasifikuj(filepath):
     if not os.path.exists(filepath):
-        print(f"Greska: fajl '{filepath}' ne postoji.")
+        print(f"Eror: file '{filepath}' does not exist.")
         return {}
 
     if not os.path.exists("model_vggish.pkl"):
-        print("Greska: model_vggish.pkl ne postoji. Pokreni prvo Train.py.")
+        print("Greska: Error, model not found.")
         return {}
 
-    print(f"\nAnaliziram: {filepath}")
+    print(f"\nAnalyze: {filepath}")
 
-    with open("model_vggish.pkl", "rb") as f:
-        clf = pickle.load(f)
+    clf = get_clf()
 
-    print("Ekstraktujem VGGish feature-e...")
+    print("Extracting vggish features")
     feat = extract_features(filepath)
     if feat is None:
-        print("Greska: nije moguce ekstraktovati feature-e.")
+        print("Error - not able to extract features.")
         return {}
 
     probs = np.array([
@@ -91,18 +98,18 @@ def klasifikuj(filepath):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Upotreba: python Klasifikuj.py <audio_fajl>")
+        print("Usage: python Klasifikuj.py <audio_file>")
         sys.exit(1)
 
-    rezultati = klasifikuj(sys.argv[1])
+    results = klasifikuj(sys.argv[1])
 
     print("\n" + "=" * 45)
-    print("       DETEKTOVANI INSTRUMENTI")
+    print("       Detected Instruments in the Audio File")
     print("=" * 45)
-    if not rezultati:
-        print("Nisu detektovani poznati instrumenti.")
+    if not results:
+        print("No known instruments detected.")
     else:
-        for naziv, pouzdanost in sorted(rezultati.items(), key=lambda x: -x[1]):
-            bar = '█' * int(pouzdanost * 30)
-            print(f"  {naziv:20s} {bar:30s} {pouzdanost:.1%}")
+        for name, confidence in sorted(results.items(), key=lambda x: -x[1]):
+            bar = '█' * int(confidence* 30)
+            print(f"  {name:20s} {bar:30s} {confidence:.1%}")
     print("=" * 45)
